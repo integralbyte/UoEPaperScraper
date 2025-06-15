@@ -113,7 +113,7 @@ for key, value in papersDict.items():
             unknown+=1
 
 if unknown == 0:
-    print(f"Download Finished.\nOut of {len(papersDict)} found papers, {success} were downloaded successfully, {unavailable} were unavailable.")
+    print(f"Download Finished.\nOut of {len(papersDict)} found papers, {success} were downloaded successfully, and {unavailable} were unavailable.")
 else:
     print(f"Download Finished.\nOut of {len(papersDict)} found papers, {success} were downloaded successfully, {unavailable} were unavailable and {unknown} failed due to unknown reasons (check logs).")
 
