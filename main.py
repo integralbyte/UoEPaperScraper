@@ -83,7 +83,7 @@ os.mkdir(folder_name)
 logsPath = os.path.join(folder_name, "logs.txt")
 
 open(logsPath, "w").close()
-print("Found " + len(papersDict) + " Papers! Download Started.")
+print("Found " + str(len(papersDict)) + " Papers! Download Started.")
 
 success = 0
 unavailable = 0
