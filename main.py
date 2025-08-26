@@ -1,123 +1,290 @@
-import requests
-import math
-from lxml import html
-import time
-import os
-import re
 
+import os, sys, json, time, warnings, logging, subprocess
+from threading import Thread, Event
+from pathlib import Path
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
+from selenium.webdriver.remote.remote_connection import LOGGER as SELENIUM_LOGGER
+from selenium.webdriver.firefox.options import Options as FFOptions
+from selenium.webdriver.firefox.service import Service as FFService
 
-def getTotalPageCount(pageHTML):
-    elementXPath = '//*[@id="aspect_discovery_SimpleSearch_div_search"]/div[2]/div/div[1]/p[1]//text()'
-    XPathTextList = pageHTML.xpath(elementXPath)
-    XPathText = ''.join(XPathTextList)
-    startIndex = XPathText.find("of")
+_DEVNULL_FILE = open(os.devnull, "w")
+os.dup2(_DEVNULL_FILE.fileno(), 2)
 
-    totalPages = int(XPathText[startIndex + 2:].strip())
-    return totalPages
+SELENIUM_LOGGER.setLevel(logging.WARNING)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-def getPaperName(pageHTML, div):
-    elementXPath = f'//*[@id="aspect_discovery_SimpleSearch_div_search-results"]/div[{div}]/div/div[1]/a/h4//text()'
-    elementResit = f'//*[@id="aspect_discovery_SimpleSearch_div_search-results"]/div[{div}]/div/div[1]/p'
-    resitTextList = pageHTML.xpath(elementResit)
-    XPathTextList = pageHTML.xpath(elementXPath)
-    XPathText = ''.join(XPathTextList)
-    if resitTextList:
-        XPathText += " Resit"
-    return XPathText
+WAIT_SECONDS = 30
+HEADLESS = True
+LOGIN_URL = "https://www.myed.ed.ac.uk/uPortal/Login?refUrl=%2Fmyed-progressive%2F"
+EXAMS_URL = "https://exampapers.ed.ac.uk/"
 
-def getPaperURL(pageHTML, div):
-    elementXPath = f'//*[@id="aspect_discovery_SimpleSearch_div_search-results"]/div[{div}]/div/div[2]/span[5]/small/a/@href'
-    XPathHrefList = pageHTML.xpath(elementXPath)
-    XPathHref = ''.join(XPathHrefList)
-    
-    return "https://exampapers.ed.ac.uk" + XPathHref
+def input_password_asterisk(prompt="Password: "):
+    """Cross-platform password input with asterisks; falls back to getpass (hidden, no asterisks)."""
+    try:
+        import msvcrt
+        print(prompt, end="", flush=True)
+        buf = []
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                print()
+                break
+            if ch == "\003":
+                raise KeyboardInterrupt
+            if ch == "\b":
+                if buf:
+                    buf.pop()
+                    print("\b \b", end="", flush=True)
+            else:
+                buf.append(ch)
+                print("*", end="", flush=True)
+        return "".join(buf)
+    except Exception:
+        try:
+            import termios, tty
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                print(prompt, end="", flush=True)
+                buf = []
+                while True:
+                    ch = sys.stdin.read(1)
+                    if ch in ("\r", "\n"):
+                        print()
+                        break
+                    if ch == "\x03":
+                        raise KeyboardInterrupt
+                    if ch in ("\x7f", "\b"):
+                        if buf:
+                            buf.pop()
+                            sys.stdout.write("\b \b")
+                            sys.stdout.flush()
+                    else:
+                        buf.append(ch)
+                        sys.stdout.write("*")
+                        sys.stdout.flush()
+                return "".join(buf)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        except Exception:
+            try:
+                import getpass
+                return getpass.getpass(prompt)
+            except Exception:
+                return input(prompt)
 
-def getPapers(cookieName, cookieValue, courseID):
-    searchResultsURL = searchResultsURL = f"https://exampapers.ed.ac.uk/discover?rpp=100&etal=0&group_by=none&page=1&filtertype_0=identifier&filter_relational_operator_0=equals&filter_0={courseID}"
+def make_driver():
+    ff_opts = FFOptions()
+    if HEADLESS:
+        ff_opts.add_argument("-headless")
 
-    searchResponse = requests.get(searchResultsURL, cookies=searchResultsCookies)
+    ff_service = FFService(log_output=os.devnull)
 
-    if "produced no results" in (searchResponse.text):
-        raise Exception("Invalid Course ID! Please contact me at @integralbyte on Github if you believe this is an error.")
-    
-    searchHTML = html.fromstring(searchResponse.content)
-    totalPageCount = math.ceil(getTotalPageCount(searchHTML)/100)
-    i = 1
-    papers = {}
+    driver = webdriver.Firefox(options=ff_opts, service=ff_service)
 
-    while i <= totalPageCount:
-        searchResultsURL = f"https://exampapers.ed.ac.uk/discover?rpp=100&etal=0&group_by=none&page={i}&filtertype_0=identifier&filter_relational_operator_0=equals&filter_0={courseID}"
-        searchResponse = requests.get(searchResultsURL, cookies=searchResultsCookies)
-        searchHTML = html.fromstring(searchResponse.content)
-
-        divs = searchHTML.xpath('//*[@id="aspect_discovery_SimpleSearch_div_search-results"]/div')
-        divsCount = len(divs)
-
-        for j in range(1, divsCount+1):
-            paperName = getPaperName(searchHTML, j)
-            paperURL = getPaperURL(searchHTML, j)
-            papers[paperName] = paperURL
-            
-        i+=1
-    
-    return papers
-
-
-CourseID = input("Course ID: ").upper()
-cookieName = input("Complete ed.ac.uk cookie name starting with \"_shibsession\": ")
-cookieValue = input("Value of the cookie: ")
-
-print("\nExtracting Papers Data.")
-
-searchResultsCookies = cookies = {
-        cookieName: cookieValue
-        }
-
-papersDict = getPapers("a", "b", CourseID)
-
-now = int(time.time())
-
-folder_name = CourseID + " Exam Papers " + str(now)
-os.mkdir(folder_name)
-
-logsPath = os.path.join(folder_name, "logs.txt")
-
-open(logsPath, "w").close()
-print("Found " + str(len(papersDict)) + " Papers! Download Started.")
-
-success = 0
-unavailable = 0
-unknown = 0
-
-for key, value in papersDict.items():
-
-    if "unavailable" in value:
-        with open(logsPath, "a") as f:
-            f.write("Download Failed (Paper Unavailable): " + key + "\n")
-            unavailable+=1
-    elif ".pdf" in value:
-        pdfResponse = requests.get(value, cookies=searchResultsCookies)
-        safe_key = re.sub(r'[<>:"/\\|?*]', '_', key)
-        pdfPath = os.path.join(folder_name, safe_key + ".pdf")
-
-        with open(pdfPath, "wb") as f:
-            f.write(pdfResponse.content)
-
-        with open(logsPath, "a") as f:
-            f.write("Download Successful: " + key + "\n")
-
-            success+=1
+    if HEADLESS:
+        driver.set_window_size(1920, 1080)
     else:
-        with open(logsPath, "a") as f:
-            f.write("Download Failed (Unknown Error): " + key + ". Download URL: " + value + "\n")
-            unknown+=1
+        try:
+            driver.maximize_window()
+        except Exception:
+            driver.set_window_size(1920, 1080)
 
-if unknown == 0:
-    print(f"Download Finished.\nOut of {len(papersDict)} found papers, {success} were downloaded successfully, and {unavailable} were unavailable.")
-else:
-    print(f"Download Finished.\nOut of {len(papersDict)} found papers, {success} were downloaded successfully, {unavailable} were unavailable and {unknown} failed due to unknown reasons (check logs).")
+    return driver
 
+def wait_presence_soft(driver, by, locator, timeout=WAIT_SECONDS):
+    try:
+        return WebDriverWait(driver, timeout).until(EC.presence_of_element_located((by, locator)))
+    except TimeoutException:
+        return None
 
-full_path = os.path.abspath(folder_name)
-print("Papers saved at: " + full_path)
+def click_if_present(driver, by, locator, timeout=WAIT_SECONDS):
+    try:
+        el = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((by, locator)))
+        el.click()
+        return True
+    except TimeoutException:
+        return False
+    except (NoSuchElementException, WebDriverException):
+        return False
 
+def send_keys_if_present(driver, by, locator, keys, timeout=WAIT_SECONDS, clear_first=True):
+    el = wait_presence_soft(driver, by, locator, timeout)
+    if not el:
+        return False
+    try:
+        if clear_first:
+            try: el.clear()
+            except Exception: pass
+        el.send_keys(keys)
+        return True
+    except Exception:
+        return False
+
+def get_text_if_present(driver, by, locator, timeout=WAIT_SECONDS):
+    el = wait_presence_soft(driver, by, locator, timeout)
+    try:
+        return (el.text or "").strip() if el else ""
+    except Exception:
+        return ""
+
+def page_contains(driver, phrase: str) -> bool:
+    try:
+        return phrase.lower() in (driver.page_source or "").lower()
+    except Exception:
+        return False
+
+def wait_until_source_contains_any(driver, phrases, timeout=WAIT_SECONDS, poll_interval=0.5):
+    end = time.time() + timeout
+    lowers = [p.lower() for p in phrases]
+    while time.time() < end:
+        try:
+            src = (driver.page_source or "").lower()
+            for i, p in enumerate(lowers):
+                if p in src:
+                    return phrases[i]
+        except Exception:
+            pass
+        time.sleep(poll_interval)
+    return None
+
+def save_cookies_json_silent(driver, json_path="cookies.json"):
+    try:
+        cookies = driver.get_cookies()
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(cookies, f, indent=2)
+        print("Saved login cookies to a local JSON file.")
+    except Exception:
+        pass
+
+def extract_name_from_welcome(raw: str) -> str | None:
+    if not raw:
+        return None
+    t = raw.replace("\xa0", " ").strip()
+    parts = [p.strip() for p in t.splitlines() if p.strip()]
+    if not parts:
+        return None
+    if parts[0].lower().startswith("you are signed in as"):
+        name = parts[-1]
+    else:
+        name = parts[-1]
+    return name.strip() or None
+
+def _boot_driver_and_open_login(holder: dict, ready_evt: Event):
+    try:
+        d = make_driver()
+        d.get(LOGIN_URL)
+        holder["driver"] = d
+    except Exception as e:
+        holder["error"] = e
+    finally:
+        ready_evt.set()
+
+def main():
+    ready = Event()
+    holder = {}
+    Thread(target=_boot_driver_and_open_login, args=(holder, ready), daemon=True).start()
+
+    print("University username (e.g., s1234567): ", end="", flush=True)
+    try:
+        username = input().strip() + "@ed.ac.uk"
+    except EOFError:
+        username = ""
+    password = input_password_asterisk("Enter your password: ").strip()
+
+    ready.wait()
+    if "error" in holder:
+        raise RuntimeError(f"Failed to start browser: {holder['error']}")
+    driver = holder["driver"]
+
+    try:
+        send_keys_if_present(driver, By.ID, "userNameInput", username)
+        send_keys_if_present(driver, By.ID, "passwordInput", password)
+
+        click_if_present(driver, By.ID, "submitButton")
+
+        wait_presence_soft(driver, By.ID, "lightboxTemplateContainer")
+
+        if page_contains(driver, "Incorrect user ID or password"):
+            print("Incorrect user ID or password")
+
+        wait_presence_soft(driver, By.XPATH, '//*[@id="idSIButton9"]')
+        click_if_present(driver, By.XPATH, '//*[@id="idSIButton9"]')
+
+        wait_until_source_contains_any(
+            driver,
+            phrases=["trouble verifying your account", "Open your Authenticator"],
+            timeout=WAIT_SECONDS,
+            poll_interval=0.5
+        )
+
+        if page_contains(driver, "trouble verifying your account"):
+            wait_presence_soft(driver, By.XPATH, '//*[@id="idDiv_SAOTCS_Proofs"]/div[2]/div')
+            click_if_present(driver, By.XPATH, '//*[@id="idDiv_SAOTCS_Proofs"]/div[2]/div')
+
+            wait_presence_soft(driver, By.XPATH, '//*[@id="idTxtBx_SAOTCC_OTC"]')
+            try:
+                print("Enter the one-time code in your authenticator app, then press Enter: ", end="", flush=True)
+                otp_code = input().strip()
+            except EOFError:
+                otp_code = ""
+            send_keys_if_present(driver, By.XPATH, '//*[@id="idTxtBx_SAOTCC_OTC"]', otp_code)
+
+            wait_presence_soft(driver, By.ID, "idSubmit_SAOTCC_Continue")
+            if not click_if_present(driver, By.ID, "idSubmit_SAOTCC_Continue"):
+                wait_presence_soft(driver, By.XPATH, '//*[@id="idSubmit_SAOTCC_Continue"]')
+                click_if_present(driver, By.XPATH, '//*[@id="idSubmit_SAOTCC_Continue"]')
+
+            wait_presence_soft(driver, By.ID, "idSIButton9")
+            click_if_present(driver, By.ID, "idSIButton9")
+
+        elif page_contains(driver, "Open your Authenticator"):
+            ctx_text = get_text_if_present(driver, By.ID, "idRichContext_DisplaySign")
+            if ctx_text:
+                print("Sign-in code: " + ctx_text)
+            print("Open your Authenticator and approve the sign-in.")
+            click_if_present(driver, By.ID, "idSIButton9", timeout=120)
+            print("Sign-in Approved!")
+
+        wait_presence_soft(driver, By.ID, "notification-icon")
+
+        welcome_raw = get_text_if_present(driver, By.XPATH, '//*[@id="region-eyebrow"]/div/div[2]/div/div[3]') or ""
+        name = extract_name_from_welcome(welcome_raw)
+        if name:
+            print(f"Login Successful. Welcome {name}!\nFetching account cookies!")
+        else:
+            print("Login Successful.")
+
+        driver.get(EXAMS_URL)
+        wait_presence_soft(
+            driver, By.XPATH,
+            "/html/body/ds-app/ds-themed-root/ds-root/div/div/main/div/ds-themed-home-page/ds-home-page/div/ds-themed-search-form/ds-search-form/form/div/div/input"
+        )
+
+        try:
+            cookies = driver.get_cookies()
+            shib = next((c for c in cookies if "shibsession" in (c.get("name") or "").lower()), None)
+            if shib and shib.get("name") and shib.get("value"):
+                print("Login Cookie Extracted!")
+                env = os.environ.copy()
+                env["COOKIE_HEADER"] = f"{shib['name']}={shib['value']}"
+                base_dir = Path(__file__).resolve().parent
+                subprocess.run([sys.executable, "ExtractPapers.py"], cwd=base_dir, env=env, check=True)
+            else:
+                print("Shibsession cookie not found.")
+        except Exception as e:
+            print(f"Failed to pass cookie to ExtractPapers.py: {e}")
+
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+if __name__ == "__main__":
+    main()
