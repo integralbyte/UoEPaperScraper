@@ -23,7 +23,6 @@ LOGIN_URL = "https://www.myed.ed.ac.uk/uPortal/Login?refUrl=%2Fmyed-progressive%
 EXAMS_URL = "https://exampapers.ed.ac.uk/"
 
 def input_password_asterisk(prompt="Password: "):
-    """Cross-platform password input with asterisks; falls back to getpass (hidden, no asterisks)."""
     try:
         import msvcrt
         print(prompt, end="", flush=True)
@@ -152,15 +151,6 @@ def wait_until_source_contains_any(driver, phrases, timeout=WAIT_SECONDS, poll_i
             pass
         time.sleep(poll_interval)
     return None
-
-def save_cookies_json_silent(driver, json_path="cookies.json"):
-    try:
-        cookies = driver.get_cookies()
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(cookies, f, indent=2)
-        print("Saved login cookies to a local JSON file.")
-    except Exception:
-        pass
 
 def extract_name_from_welcome(raw: str) -> str | None:
     if not raw:
