@@ -11,12 +11,6 @@ from selenium.webdriver.remote.remote_connection import LOGGER as SELENIUM_LOGGE
 from selenium.webdriver.firefox.options import Options as FFOptions
 from selenium.webdriver.firefox.service import Service as FFService
 
-_DEVNULL_FILE = open(os.devnull, "w")
-os.dup2(_DEVNULL_FILE.fileno(), 2)
-
-SELENIUM_LOGGER.setLevel(logging.WARNING)
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 WAIT_SECONDS = 30
 HEADLESS = True
 LOGIN_URL = "https://www.myed.ed.ac.uk/uPortal/Login?refUrl=%2Fmyed-progressive%2F"
@@ -102,14 +96,24 @@ def wait_presence_soft(driver, by, locator, timeout=WAIT_SECONDS):
     except TimeoutException:
         return None
 
-def click_if_present(driver, by, locator, timeout=WAIT_SECONDS):
+def xpath_present(driver, by, locator) -> bool:
     try:
-        el = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((by, locator)))
+        return bool(driver.find_elements(by, locator))
+    except Exception:
+        return False
+
+def click_if_present(driver, by, locator, timeout=None):
+    try:
+        if timeout:
+            el = WebDriverWait(driver, timeout).until(
+                EC.element_to_be_clickable((by, locator))
+            )
+        else:
+            el = driver.find_element(by, locator)
+
         el.click()
         return True
-    except TimeoutException:
-        return False
-    except (NoSuchElementException, WebDriverException):
+    except (TimeoutException, NoSuchElementException, WebDriverException):
         return False
 
 def send_keys_if_present(driver, by, locator, keys, timeout=WAIT_SECONDS, clear_first=True):
@@ -198,26 +202,73 @@ def main():
 
         click_if_present(driver, By.ID, "submitButton")
 
-        wait_presence_soft(driver, By.ID, "lightboxTemplateContainer")
-
+        
+        wait_until_source_contains_any(
+            driver,
+            phrases=["lightboxTemplateContainer", "Incorrect user ID or password"],
+            timeout=WAIT_SECONDS,
+            poll_interval=0.5
+        )
+        
         if page_contains(driver, "Incorrect user ID or password"):
             print("Incorrect user ID or password")
+            sys.exit()
 
         wait_presence_soft(driver, By.XPATH, '//*[@id="idSIButton9"]')
         click_if_present(driver, By.XPATH, '//*[@id="idSIButton9"]')
 
         wait_until_source_contains_any(
             driver,
-            phrases=["trouble verifying your account", "Open your Authenticator"],
+            phrases=["trouble verifying your account", "Open your Authenticator", "Enter the code displayed"],
             timeout=WAIT_SECONDS,
             poll_interval=0.5
         )
 
         if page_contains(driver, "trouble verifying your account"):
-            wait_presence_soft(driver, By.XPATH, '//*[@id="idDiv_SAOTCS_Proofs"]/div[2]/div')
-            click_if_present(driver, By.XPATH, '//*[@id="idDiv_SAOTCS_Proofs"]/div[2]/div')
+            proof1 = '//*[@id="idDiv_SAOTCS_Proofs"]/div[1]/div'
+            proof2 = '//*[@id="idDiv_SAOTCS_Proofs"]/div[2]/div'
 
-            wait_presence_soft(driver, By.XPATH, '//*[@id="idTxtBx_SAOTCC_OTC"]')
+            while True:
+                has1 = xpath_present(driver, By.XPATH, proof1)
+                has2 = xpath_present(driver, By.XPATH, proof2)
+
+                # Exit when neither XPath is on the page
+                if not (has1 or has2):
+                    # print("breaking")
+                    break
+
+                if has1:
+                    # print("found 1")
+                    while True:
+                        if page_contains(driver, "lightbox-cover disable-lightbox"):
+                            # print("1: loading wait")
+                            time.sleep(0.5)
+                        else:
+                            break
+                    # print("broke 1")
+                    click_if_present(driver, By.XPATH, proof1)
+
+                if has2:
+                    # print("found 2")
+                    while True:
+                        if page_contains(driver, "lightbox-cover disable-lightbox"):
+                            # print("2: loading wait")
+                            time.sleep(0.5)
+                        else:
+                            break
+                    # print("broke 2")
+                    click_if_present(driver, By.XPATH, proof2)
+
+                time.sleep(0.5)
+
+            wait_until_source_contains_any(
+            driver,
+            phrases=["Open your Authenticator", "Enter the code displayed"],
+            timeout=WAIT_SECONDS,
+            poll_interval=0.5
+            )
+            
+        if page_contains(driver, "Enter the code displayed"):
             try:
                 print("Enter the one-time code in your authenticator app, then press Enter: ", end="", flush=True)
                 otp_code = input().strip()
