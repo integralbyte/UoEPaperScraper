@@ -65,7 +65,7 @@ HEADLESS = True     # set to False to debug any errors (shows the browser)
 3. Following the Microsoft redirection, it handles either:
    * **Sign-in Code** (approval/number match), or
    * **One-Time 6-Digit Code** (user enters OTP), or
-   * **“Trouble verifying your account”** → Happens when the user is rate-limited. It will continue retrying until one of the above methods succeeds.
+   * **“Trouble verifying your account”** → Happens when the user is rate-limited. It will continue retrying until one of the above methods is available.
 4. Visits the exam papers site and grabs the **Shibboleth session** cookie.
 5. Runs `ExtractPapers.py` with the `COOKIE_HEADER` set so it can download the papers.
 
